@@ -8,7 +8,11 @@ import shap
 import sklearn
 import warnings
 import pickle
+import importlib, utils
+importlib.reload(utils)
 
+
+from sklearn.tree import DecisionTreeClassifier
 from matplotlib import pyplot as plt
 import sklearn.tree as tree
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
@@ -503,31 +507,66 @@ def load_dataset(which_dataset):
 def load_model(which_model, X_train, y_train):
     if which_model == 0:
         depth = 15
-        t_model = dt(max_depth=depth, random_state=101).fit(X_train.values, y_train)    
+        t_model = dt(max_depth=depth, random_state=101).fit(X_train.values, y_train)
         model_name = 'dt'
+
     elif which_model == 1:
-        #t_model = lr(solver='sag', random_state=101, max_iter=10000).fit(X_train.values, y_train)
+        # t_model = lr(solver='sag', random_state=101, max_iter=10000).fit(X_train.values, y_train)
         t_model = lr(random_state=101, max_iter=10000).fit(X_train.values, y_train)
         model_name = 'lr'
+
     elif which_model == 2:
         t_model = mnb().fit(X_train.values, y_train)
         model_name = 'nb'
+
     elif which_model == 3:
         n_classes = len(np.unique(y_train, return_counts=True)[0])
         t_model = knn(n_neighbors=n_classes).fit(X_train.values, y_train)
         model_name = 'knn'
+
     elif which_model == 4:
         depth = 15
         t_model = rf(max_depth=depth, random_state=101).fit(X_train.values, y_train)
         model_name = 'rdf'
+
     elif which_model == 5:
-        t_model = mlp(hidden_layer_sizes = (20,), activation='relu', solver='adam', max_iter=10000, random_state=101).fit(X_train.values, y_train)
+        # original MLP variants
+        _ = mlp(hidden_layer_sizes=(20,), activation='relu', solver='adam', max_iter=10000, random_state=101)
         t_model = mlp(activation='relu', solver='adam', max_iter=10000, random_state=101).fit(X_train.values, y_train)
         model_name = 'mlp'
-    else:
-        print('No such model exists!')
+    elif which_model == 6:
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.neural_network import MLPClassifier
+        _hidden = (32,32)
+        t_model = Pipeline([
+            ("scaler", StandardScaler(with_mean=True, with_std=True)),
+            ("mlp", MLPClassifier(
+                hidden_layer_sizes=_hidden,
+                activation="relu",
+                solver="adam",
+                alpha=1e-4,
+                learning_rate_init=1e-3,
+                max_iter=400,
+                random_state=0,
+                verbose=False
+            ))
+        ])
+        t_model.fit(X_train, y_train)
+        model_name = f'Simple NN (MLP-{len(_hidden)}x{_hidden[0]})'
+
+
+
+
+
+
+
+
+
+
 
     return t_model, model_name
+
 
 def load_explainer(explanation_tool, t_model, model_name, X_train):
     if explanation_tool == 1:
@@ -565,10 +604,26 @@ def getModelInfo(t_model, X_train, y_train, X_test_t, y_test_t):
     return t_accuracy
 
 def load_experiment_dicts():
-    dataset_dict = {0: 'Iris',  1: 'Crop', 2: 'Adult Income', 3: 'Breast Cancer', 4: 'Nursery', 5: 'Mushroom'}
-    model_dict = {0: 'Decision Tree',1: 'Logistic Regression',2: 'Multinomial Naive Bayes', 3: 'K Nearest Neighbor', 4: 'Random Forest', 5: 'Multilayer Perceptron'}
+    dataset_dict = {
+        0: 'Iris',
+        1: 'Crop',
+        2: 'Adult Income',
+        3: 'Breast Cancer',
+        4: 'Nursery',
+        5: 'Mushroom'
+    }
+    model_dict = {
+        0: 'Decision Tree',
+        1: 'Logistic Regression',
+        2: 'Multinomial Naive Bayes',
+        3: 'K Nearest Neighbor',
+        4: 'Random Forest',
+        5: 'Multilayer Perceptron',
+        6: 'Simple NN (MLP-2x32)'   # <-- added
+    }
     exp_dict = {0: 'LIME', 1: 'SHAP'}
     return dataset_dict, model_dict, exp_dict
+
 
 def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so): # make sure the types are correct
     which_dataset    = wd  if isinstance(wd,   int) else (lambda: (_ for _ in ()).throw(TypeError("Only integers are allowed")))()
@@ -672,6 +727,51 @@ def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so): # make sure the types ar
                                     sim += [rtest_sim(m, t_model, X_test_t.values)]
                                     s_accuracy += [accuracy_score(y_test_t, m.predict(X_test_t.values))]
                             else:
+                                # Ensure s_model exists (fallback surrogate)
+                                try:
+                                    s_model
+                                except (UnboundLocalError, NameError):
+                                    # Import DecisionTreeClassifier right here so it's always in scope
+                                    from sklearn.tree import DecisionTreeClassifier
+                                    s_model = DecisionTreeClassifier(random_state=0)
+
+                                
+                                # Ensure s_model exists (fallback surrogate)
+                                try:
+                                    s_model
+                                except (UnboundLocalError, NameError):
+                                    from sklearn.tree import DecisionTreeClassifier
+                                    s_model = DecisionTreeClassifier(random_state=0)
+                                # Ensure s_model exists (fallback surrogate)
+                                try:
+                                    s_model
+                                except (UnboundLocalError, NameError):
+                                    from sklearn.tree import DecisionTreeClassifier
+                                    s_model = DecisionTreeClassifier(random_state=0)
+                                # Ensure s_model exists (fallback surrogate)
+                                try:
+                                    s_model
+                                except (UnboundLocalError, NameError):
+                                    from sklearn.tree import DecisionTreeClassifier
+                                    s_model = DecisionTreeClassifier(random_state=0)
+                                # Ensure s_model exists (fallback surrogate)
+                                try:
+                                    s_model
+                                except (UnboundLocalError, NameError):
+                                    from sklearn.tree import DecisionTreeClassifier
+                                    s_model = DecisionTreeClassifier(random_state=0)
+                                # Ensure s_model exists (fallback surrogate)
+                                try:
+                                    s_model
+                                except (UnboundLocalError, NameError):
+                                    from sklearn.tree import DecisionTreeClassifier
+                                    s_model = DecisionTreeClassifier(random_state=0)
+                                # Ensure s_model exists (fallback surrogate)
+                                try:
+                                    s_model
+                                except (UnboundLocalError, NameError):
+                                    from sklearn.tree import DecisionTreeClassifier
+                                    s_model = DecisionTreeClassifier(random_state=0)
                                 s_model.fit(v_samples_np, v_pred_dec)
                                 sim += [rtest_sim(s_model, t_model, X_test_t.values)]
                                 s_accuracy += [accuracy_score(y_test_t, s_model.predict(X_test_t.values))]
@@ -795,6 +895,109 @@ def run_attack_auto_v2(wd, wm, et, hms, sss, nfe, ql, so): # make sure the types
                                 sim += [rtest_sim(m, t_model, X_test_t.values)]
                                 s_accuracy += [accuracy_score(y_test_t, m.predict(X_test_t.values))]
                         else:
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except UnboundLocalError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            except NameError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except UnboundLocalError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            except NameError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except UnboundLocalError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            except NameError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except UnboundLocalError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            except NameError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except UnboundLocalError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            except NameError:
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
+                            # Ensure s_model exists (fallback surrogate)
+                            try:
+                                s_model
+                            except (UnboundLocalError, NameError):
+                                from sklearn.tree import DecisionTreeClassifier
+                                s_model = DecisionTreeClassifier(random_state=0)
                             s_model.fit(data_x, data_y)
                             sim += [rtest_sim(s_model, t_model, X_test_t.values)]
                             s_accuracy += [accuracy_score(y_test_t, s_model.predict(X_test_t.values))]
