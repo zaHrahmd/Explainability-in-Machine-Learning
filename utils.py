@@ -23,25 +23,29 @@ from sklearn.ensemble import RandomForestClassifier as rf
 from sklearn.neural_network import MLPClassifier as mlp
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
-import os, sys
+import os
+import sys
 from collections import defaultdict
 
-# ==============================
-# Global defense / detector configuration
-# Keep ONE definition per setting only.
-# The notebook can override any of these.
-# ==============================
+# =========================================================
+# GLOBAL CONFIGURATION
+# Single source of truth: no duplicated / conflicting flags
+# =========================================================
 
-# ---- PRADA ----
+# ------------------------------
+# PRADA
+# ------------------------------
 USE_PRADA = False
 PRADA_WINDOW = 200
 PRADA_DELAY = 10
 PRADA_ALPHA = 0.05
 PRADA_MIN_N = 30
 PRADA_HISTORY = 400
-PRADA_ACTION = "stealth_corrupt"   # zero | shuffle | demote_promote | stealth_corrupt
+PRADA_ACTION = "stealth_corrupt"  # "zero" | "shuffle" | "demote_promote" | "stealth_corrupt"
 
-# ---- SIM detector ----
+# ------------------------------
+# SIM detector
+# ------------------------------
 USE_SIM_CHECK = False
 SIM_HISTORY = 200
 SIM_K = 5
@@ -49,48 +53,90 @@ SIM_TAU = 1.5
 SIM_MIN_HITS = 1
 SIM_DELAY_QUERIES = 12
 
-# ---- Query-buffer detector (Step 1) ----
-USE_QUERY_CLUSTER_DETECTOR = False
-QUERY_BUFFER_SIZE = 100
-QUERY_CLUSTER_TAU = 0.35
-QUERY_CLUSTER_MIN_HITS = 2
-QUERY_CLUSTER_DELAY = 10
-
-# ---- Step 2 / post-detect response ----
-FLIP_LABEL_ON_DETECT = False
-FAKE_LABEL_MODE = "second_best"      # second_best | random_other
-USE_FAKE_SHAP_ON_DETECT = True
-FAKE_SHAP_RANDOM_ON_DETECT = False    # if True, replace explanation with random noise after detection
-
-# ---- Existing optional actions ----
+# classical post-detect actions
 SIM_BLOCK_ON_DETECT = False
 SIM_CORRUPT_ON_DETECT = False
 REVOKE_EXPLANATION_ON_DETECT = False
+
+# traversal degradation after detect
 POST_DETECT_RANDOM_EXPANSION = False
 POST_DETECT_K = 1
 POST_DETECT_AVOID_RECENT = False
 
-# ---- Confidence gating / perturbation ----
-USE_CONF_GATING = False
-CONF_TAU = 0.4
-CONF_FLIP_PROB = 0.5
-
-# ---- Corruption parameters ----
+# corruption parameters
 SIM_CORRUPT_K = 8
 SIM_CORRUPT_NOISE = 0.03
 SIM_CORRUPT_PRESERVE_SUM = True
 SIM_CORRUPT_KEEP_TOP1 = False
 SIM_CORRUPT_FLIP_PROB = 0.35
 
-# ---- SHAP / traversal / misc ----
+# ------------------------------
+# Step 1: query-buffer detector
+# ------------------------------
+USE_QUERY_CLUSTER_DETECTOR = False
+QUERY_BUFFER_SIZE = 100
+QUERY_CLUSTER_TAU = 0.35
+QUERY_CLUSTER_MIN_HITS = 2
+QUERY_CLUSTER_DELAY = 10
+
+# ------------------------------
+# Step 2: output distortion
+# ------------------------------
+FLIP_LABEL_ON_DETECT = False
+FAKE_LABEL_MODE = "second_best"      # "second_best" | "random_other"
+USE_FAKE_SHAP_ON_DETECT = False      # use SHAP(fake class)
+RANDOMIZE_SHAP_ON_DETECT = False     # stronger: random explanation after detect
+
+# ------------------------------
+# confidence gating
+# ------------------------------
+USE_CONF_GATING = False
+CONF_TAU = 0.4
+CONF_FLIP_PROB = 0.5
+
+# ------------------------------
+# Optional other SHAP defenses
+# ------------------------------
 USE_VIEW_D = False
 USE_VIEW_E = False
+
+VIEWD_MID_M = 8
+VIEWD_ALPHA = 0.25
+VIEWD_SIGMA = 0.05
+VIEWD_PRESERVE_SUM = True
+
+VIEWE_TOPK = 5
+VIEWE_CONC_TAU = 0.35
+VIEWE_COVER_T = 3
+VIEWE_MIN_QUERIES = 20
+VIEWE_REVERSE_PROB = 1.0
+VIEWE_DISRUPT_K = 8
+VIEWE_MODE = "shuffle"
+VIEWE_DELAY_QUERIES = 50
+VIEWE_TOP_DEMOTE = 7
+VIEWE_MID_PROMOTE = 7
+VIEWE_DEMOTE_FACTOR = 0.1
+VIEWE_PROMOTE_FACTOR = 3.0
+VIEWE_LAMBDA = 1.0
+VIEWE_CLIP_ALPHA = 1.0
+VIEWE_PRESERVE_SUM = True
+VIEWE_KEEP_TOP1_FIXED = False
+
+# ------------------------------
+# SHAP speed / budget
+# ------------------------------
 KERNEL_SHAP_NSAMPLES = 80
 
-# ==============================
-# Internal states
-# ==============================
+# SIM-defense params used by apply_similarity_defense
+SIM_DEFENSE_MODE = "shuffle"
+SIM_TOP_DEMOTE = 5
+SIM_MID_PROMOTE = 5
+SIM_DEMOTE_FACTOR = 0.2
+SIM_PROMOTE_FACTOR = 2.5
 
+# =========================================================
+# RUNTIME STATES
+# =========================================================
 _PRADA_STATE = {
     "history": [],
     "D": [],
@@ -126,59 +172,33 @@ _QUERY_CLUSTER_STATE = {
     "last_best_d": None,
 }
 
-# ==============================
-# SHAP defense configuration
-# ==============================
-VIEWD_MID_M = 8
-VIEWD_ALPHA = 0.25
-VIEWD_SIGMA = 0.05
-VIEWD_PRESERVE_SUM = True
-
-VIEWE_TOPK = 5
-VIEWE_CONC_TAU = 0.35
-VIEWE_COVER_T = 3
-VIEWE_MIN_QUERIES = 20
-VIEWE_REVERSE_PROB = 1.0
-VIEWE_DISRUPT_K = 8
-VIEWE_MODE = "shuffle"
-VIEWE_DELAY_QUERIES = 50
-VIEWE_TOP_DEMOTE = 7
-VIEWE_MID_PROMOTE = 7
-VIEWE_DEMOTE_FACTOR = 0.1
-VIEWE_PROMOTE_FACTOR = 3.0
-VIEWE_LAMBDA = 1.0
-VIEWE_CLIP_ALPHA = 1.0
-VIEWE_PRESERVE_SUM = True
-VIEWE_KEEP_TOP1_FIXED = False
-
 _VIEWE_STATE = {
     "n_queries": 0,
     "patterns_seen": set(),
     "class_centroids": defaultdict(lambda: None),
-    "class_counts": defaultdict(int)
+    "class_counts": defaultdict(int),
 }
 
-# ==============================
-# Reset helpers
-# ==============================
-
+# =========================================================
+# RESET HELPERS
+# =========================================================
 def reset_prada_state():
     _PRADA_STATE["n"] = 0
-    _PRADA_STATE["history"] = []
-    _PRADA_STATE["D"] = []
+    _PRADA_STATE["history"].clear()
+    _PRADA_STATE["D"].clear()
     _PRADA_STATE["detected"] = False
     _PRADA_STATE["detect_count"] = 0
     _PRADA_STATE["first_detect_q"] = None
-    _PRADA_STATE["detect_qs"] = []
+    _PRADA_STATE["detect_qs"].clear()
     _PRADA_STATE["last_pval"] = None
 
 
 def reset_sim_state():
     _SIM_STATE["n"] = 0
-    _SIM_STATE["history"] = []
+    _SIM_STATE["history"].clear()
     _SIM_STATE["detected"] = False
     _SIM_STATE["detect_count"] = 0
-    _SIM_STATE["detect_qs"] = []
+    _SIM_STATE["detect_qs"].clear()
     _SIM_STATE["first_detect_q"] = None
     _SIM_STATE["blocked"] = False
     _SIM_STATE["last_hits"] = 0
@@ -196,10 +216,9 @@ def reset_query_cluster_state():
     _QUERY_CLUSTER_STATE["last_hits"] = 0
     _QUERY_CLUSTER_STATE["last_best_d"] = None
 
-# ==============================
-# Distances / detectors
-# ==============================
-
+# =========================================================
+# PRADA
+# =========================================================
 def _prada_dist_eps_l1(curr, prev, idx, eps):
     d = 0.0
     for j in idx:
@@ -215,21 +234,25 @@ def prada_update(curr, detect_idx, epsilon_set):
     st = _PRADA_STATE
     st["n"] += 1
     q = st["n"]
-
     curr = np.asarray(curr, dtype=float)
+
     hist = st["history"]
     if len(hist) > 0:
         dmin = min(_prada_dist_eps_l1(curr, prev, detect_idx, epsilon_set) for prev in hist)
         st["D"].append(float(dmin))
-        st["D"] = st["D"][-int(globals().get("PRADA_WINDOW", 200)):]
+        W = int(globals().get("PRADA_WINDOW", 200))
+        st["D"] = st["D"][-W:]
 
+    H = int(globals().get("PRADA_HISTORY", 400))
     hist.append(curr.copy())
-    st["history"] = hist[-int(globals().get("PRADA_HISTORY", 400)):]
+    st["history"] = hist[-H:]
 
     if q <= int(globals().get("PRADA_DELAY", 10)):
         return False
+
     if len(st["D"]) < int(globals().get("PRADA_MIN_N", 30)):
         return False
+
     if st["detected"]:
         return True
 
@@ -255,15 +278,61 @@ def prada_update(curr, detect_idx, epsilon_set):
             if st["first_detect_q"] is None:
                 st["first_detect_q"] = int(q)
             return True
+
     return False
 
 
+def prada_apply_action(exp):
+    mode = str(globals().get("PRADA_ACTION", "stealth_corrupt")).lower()
+    exp = np.asarray(exp, dtype=float).copy()
+    n = len(exp)
+
+    if n == 0:
+        return exp
+    if mode == "zero":
+        return np.zeros_like(exp)
+    if mode == "shuffle":
+        idx = np.argsort(-np.abs(exp))
+        k = max(2, min(int(globals().get("SIM_K", 5)), n))
+        topk = idx[:k]
+        vals = exp[topk].copy()
+        np.random.shuffle(vals)
+        exp[topk] = vals
+        return exp
+    if mode == "demote_promote":
+        try:
+            return apply_similarity_defense(exp)
+        except Exception:
+            return np.zeros_like(exp)
+    if mode == "stealth_corrupt":
+        mu = float(exp.mean())
+        sigma = float(exp.std()) + 1e-12
+        idx_sorted = np.argsort(-np.abs(exp))
+        k = min(5, n)
+        top = idx_sorted[:k]
+        mid = idx_sorted[k:2 * k] if 2 * k <= n else idx_sorted[k:]
+        exp2 = exp.copy()
+        if len(mid) > 0 and len(top) > 0:
+            take = min(len(top), len(mid))
+            perm_top = np.random.permutation(top)[:take]
+            perm_mid = np.random.permutation(mid)[:take]
+            tmp = exp2[perm_top].copy()
+            exp2[perm_top] = exp2[perm_mid]
+            exp2[perm_mid] = tmp
+        z = (exp2 - mu) / sigma
+        z = z + np.random.normal(0, 0.05, size=z.shape)
+        return z * sigma + mu
+    return exp
+
+# =========================================================
+# SIM / QUERY CLUSTER DISTANCES + DETECTORS
+# =========================================================
 def _sim_dist_eps(curr, prev, idx, eps):
     d = 0.0
     for j in idx:
         denom = float(eps[j]) + 1e-12
         d += abs(float(curr[j]) - float(prev[j])) / denom
-    return d
+    return float(d)
 
 
 def _query_dist_eps_all(curr, prev, eps):
@@ -311,13 +380,14 @@ def is_suspicious_query_cluster(curr, epsilon_set):
     st["last_hits"] = int(hits)
     st["last_best_d"] = float(best_d) if best_d is not None else None
 
-    trigger = (hits >= int(globals().get("QUERY_CLUSTER_MIN_HITS", 2)))
+    trigger = hits >= int(globals().get("QUERY_CLUSTER_MIN_HITS", 2))
     if trigger and not st["detected"]:
         st["detected"] = True
         st["detect_count"] += 1
         st["detect_qs"].append(int(q))
         if st["first_detect_q"] is None:
             st["first_detect_q"] = int(q)
+
     return (trigger, hits, best_d)
 
 
@@ -354,23 +424,26 @@ def is_autolycus_like(curr, top_idx, epsilon_set):
     _SIM_STATE["history"] = hist[-SIM_HISTORY:]
     _SIM_STATE["last_hits"] = int(hits)
     _SIM_STATE["last_best_d"] = float(best_d) if best_d is not None else None
-    trigger = (hits >= SIM_MIN_HITS)
+
+    trigger = hits >= SIM_MIN_HITS
     return (trigger, hits, best_d)
 
-# ==============================
-# Explanation corruption / optional defenses
-# ==============================
-
+# =========================================================
+# EXPLANATION / SHAP MANIPULATION HELPERS
+# =========================================================
 def apply_similarity_defense(exp):
     s = np.asarray(exp, dtype=float).copy()
     n = len(s)
     if n < 3:
         return s
+
     idx = np.argsort(-np.abs(s))
     base_sum = float(np.sum(s))
-    mode = "shuffle"
+    mode = str(globals().get("SIM_DEFENSE_MODE", "demote_promote")).lower()
+
     if mode == "zero":
         return np.zeros_like(s)
+
     if mode == "shuffle":
         k = max(2, min(int(globals().get("SIM_K", 5)), n))
         topk = idx[:k]
@@ -378,50 +451,24 @@ def apply_similarity_defense(exp):
         np.random.shuffle(vals)
         s[topk] = vals
         return s
+
+    k_top = max(1, min(int(globals().get("SIM_TOP_DEMOTE", 5)), n))
+    k_mid = max(1, min(int(globals().get("SIM_MID_PROMOTE", 5)), max(0, n - k_top)))
+    top = idx[:k_top]
+    mid = idx[k_top:k_top + k_mid]
+
+    dem = float(globals().get("SIM_DEMOTE_FACTOR", 0.2))
+    pro = float(globals().get("SIM_PROMOTE_FACTOR", 2.5))
+
+    s[top] *= dem
+    if len(mid) > 0:
+        s[mid] *= pro
+
+    diff = float(np.sum(s) - base_sum)
+    tail = idx[::-1]
+    if len(tail) > 0:
+        s[int(tail[0])] -= diff
     return s
-
-
-def prada_apply_action(exp):
-    mode = str(globals().get("PRADA_ACTION", "stealth_corrupt")).lower()
-    exp = np.asarray(exp, dtype=float).copy()
-    n = len(exp)
-    if n == 0:
-        return exp
-    if mode == "zero":
-        return np.zeros_like(exp)
-    if mode == "shuffle":
-        idx = np.argsort(-np.abs(exp))
-        k = max(2, min(int(globals().get("SIM_K", 5)), n))
-        topk = idx[:k]
-        vals = exp[topk].copy()
-        np.random.shuffle(vals)
-        exp[topk] = vals
-        return exp
-    if mode == "demote_promote":
-        try:
-            return apply_similarity_defense(exp)
-        except Exception:
-            return np.zeros_like(exp)
-    if mode == "stealth_corrupt":
-        mu = float(exp.mean())
-        sigma = float(exp.std()) + 1e-12
-        idx_sorted = np.argsort(-np.abs(exp))
-        k = min(5, n)
-        top = idx_sorted[:k]
-        mid = idx_sorted[k:2 * k] if 2 * k <= n else idx_sorted[k:]
-        exp2 = exp.copy()
-        if len(mid) > 0 and len(top) > 0:
-            take = min(len(top), len(mid))
-            perm_top = np.random.permutation(top)[:take]
-            perm_mid = np.random.permutation(mid)[:take]
-            tmp = exp2[perm_top].copy()
-            exp2[perm_top] = exp2[perm_mid]
-            exp2[perm_mid] = tmp
-        z = (exp2 - mu) / sigma
-        z = z + np.random.normal(0, 0.05, size=z.shape)
-        exp2 = z * sigma + mu
-        return exp2
-    return exp
 
 
 def sim_corrupt_explanation(exp, n_f_e=None):
@@ -429,24 +476,31 @@ def sim_corrupt_explanation(exp, n_f_e=None):
     n = len(s)
     if n < 4:
         return s
+
     base_sum = float(np.sum(s))
     idx_desc = np.argsort(-np.abs(s))
+
     k = int(globals().get("SIM_CORRUPT_K", 8))
     if n_f_e is not None:
         k = min(k, int(n_f_e))
     k = max(2, min(k, n // 2))
+
     m = min(2 * k, n)
     pool = idx_desc[:m]
     vals = s[pool].copy()
     np.random.shuffle(vals)
+
     flip_p = float(globals().get("SIM_CORRUPT_FLIP_PROB", 0.35))
     if flip_p > 0:
         flips = (np.random.rand(len(vals)) < flip_p)
         vals[flips] *= -1.0
+
     s[pool] = vals
+
     sigma = float(globals().get("SIM_CORRUPT_NOISE", 0.03))
     if sigma > 0:
         s = s + np.random.normal(0, sigma * (np.std(s) + 1e-12), size=s.shape)
+
     if globals().get("SIM_CORRUPT_PRESERVE_SUM", True):
         diff = float(np.sum(s) - base_sum)
         tail = [int(j) for j in idx_desc[::-1] if int(j) not in set(pool)]
@@ -454,11 +508,9 @@ def sim_corrupt_explanation(exp, n_f_e=None):
             s[tail[0]] -= diff
         else:
             s[int(idx_desc[-1])] -= diff
+
     return s
 
-# ==============================
-# SHAP helper defenses
-# ==============================
 
 def _shap_concentration_score(s):
     s = np.asarray(s, dtype=float)
@@ -478,12 +530,14 @@ def _update_centroid(pred_class, s):
     s = np.asarray(s, dtype=float)
     mu = _VIEWE_STATE["class_centroids"][pred_class]
     cnt = _VIEWE_STATE["class_counts"][pred_class]
+
     if mu is None:
         mu = s.copy()
         cnt = 1
     else:
         cnt += 1
         mu = mu + (s - mu) / cnt
+
     _VIEWE_STATE["class_centroids"][pred_class] = mu
     _VIEWE_STATE["class_counts"][pred_class] = cnt
 
@@ -491,10 +545,18 @@ def _update_centroid(pred_class, s):
 def _should_reverse_view_e(s, pred_class):
     conc = _shap_concentration_score(s)
     pattern = _topk_pattern(s, VIEWE_TOPK)
+
     if conc >= VIEWE_CONC_TAU:
         _VIEWE_STATE["patterns_seen"].add(pattern)
+
     coverage = len(_VIEWE_STATE["patterns_seen"])
     trigger = (coverage >= VIEWE_COVER_T)
+
+    if _VIEWE_STATE["n_queries"] % 50 == 0:
+        print("q=", _VIEWE_STATE["n_queries"],
+              "conc=", round(conc, 3),
+              "coverage=", coverage,
+              "trigger=", trigger)
     return trigger
 
 
@@ -503,48 +565,61 @@ def view_e_adaptive_reverse_shap(s, pred_class=0):
     n = len(s)
     if n < 3:
         return s
+
     base_sum = float(np.sum(s))
     idx = np.argsort(-np.abs(s))
     top_idx = int(idx[0])
     top_val = float(s[top_idx])
+
     _update_centroid(pred_class, s)
     _VIEWE_STATE["n_queries"] = _VIEWE_STATE.get("n_queries", 0) + 1
     q = int(_VIEWE_STATE["n_queries"])
+
     delay = int(globals().get("VIEWE_DELAY_QUERIES", 50))
     if q <= delay:
         return s
+
     do_defend = _should_reverse_view_e(s, pred_class)
     if not do_defend:
         return s
+
     p = float(globals().get("VIEWE_REVERSE_PROB", 1.0))
     if np.random.rand() >= p:
         return s
+
     k_top = int(globals().get("VIEWE_TOP_DEMOTE", 7))
     k_mid = int(globals().get("VIEWE_MID_PROMOTE", 7))
     demote_factor = float(globals().get("VIEWE_DEMOTE_FACTOR", 0.1))
     promote_factor = float(globals().get("VIEWE_PROMOTE_FACTOR", 3.0))
+
     k_top = max(1, min(k_top, n))
     k_mid = max(1, min(k_mid, max(0, n - k_top)))
     top = idx[:k_top]
     mid = idx[k_top:k_top + k_mid]
+
     s_tilde = s.copy()
     s_tilde[top] *= demote_factor
     if len(mid) > 0:
         s_tilde[mid] *= promote_factor
+
     lam = float(globals().get("VIEWE_LAMBDA", 1.0))
     lam = max(0.0, min(1.0, lam))
     s_tilde = (1.0 - lam) * s + lam * s_tilde
+
+    if globals().get("VIEWE_KEEP_TOP1_FIXED", False):
+        s_tilde[top_idx] = top_val
+
     alpha = float(globals().get("VIEWE_CLIP_ALPHA", 1.0))
     bounds = alpha * (np.abs(s) + 1e-12)
     delta = np.clip(s_tilde - s, -bounds, bounds)
     s_tilde = s + delta
+
     if globals().get("VIEWE_PRESERVE_SUM", True):
         diff = float(np.sum(s_tilde) - base_sum)
         tail_candidates = [int(j) for j in idx[::-1] if int(j) != top_idx]
         if tail_candidates:
             s_tilde[tail_candidates[0]] -= diff
-    if globals().get("VIEWE_KEEP_TOP1_FIXED", False):
-        s_tilde[top_idx] = top_val
+
     return s_tilde
 
 
@@ -575,7 +650,9 @@ def view_d_stability_limited(s):
             s[tail_idx[0]] -= diff
     return s
 
-
+# =========================================================
+# GENERAL UTILITIES
+# =========================================================
 class HiddenPrints:
     def __enter__(self):
         self._original_stdout = sys.stdout
@@ -590,9 +667,6 @@ np.set_printoptions(suppress=True)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=UserWarning)
 
-# ==============================
-# LIME helpers
-# ==============================
 
 def takeFourth(elem):
     return abs(elem[3])
@@ -638,9 +712,6 @@ def extract_explanation_boundaries(model, explainer, n_ft):
             sample[feature_index] = tmp_exp[2] + 1
     return boundaries
 
-# ==============================
-# Data generation helpers
-# ==============================
 
 def sample_set_generation(dataset, n_classes, n_samples_per_class):
     sample_set = []
@@ -648,12 +719,14 @@ def sample_set_generation(dataset, n_classes, n_samples_per_class):
         lister = [int(x) for x in n_samples_per_class]
     else:
         lister = (np.ones((n_classes,), dtype=int) * int(n_samples_per_class)).tolist()
+
     for i in range(len(lister)):
         tmp = np.where(dataset[:, -1] == i)
         pop = tmp[0].tolist()
         if len(pop) == 0:
             continue
-        need = min(int(lister[i]), len(pop))
+        need = int(lister[i])
+        need = min(need, len(pop))
         if need <= 0:
             continue
         indices = random.sample(pop, need)
@@ -662,24 +735,34 @@ def sample_set_generation(dataset, n_classes, n_samples_per_class):
     return sample_set
 
 
-def mega_sample_generation(testx, testy, n, sizes, n_set):
-    test_cpy = []
-    for i in range(len(testy)):
-        test_cpy += [np.append(testx[i], testy[i])]
-    test_cpy = np.array(test_cpy)
-    samples_mega = []
-    for _ in range(n_set):
-        sample_sets = []
-        for j in range(len(sizes)):
-            sample_set_sui = sample_set_generation(test_cpy, n, sizes[j])
-            sample_sets += [sample_set_sui.copy()]
-        samples_mega += [sample_sets]
-    return samples_mega
+def _safe_shap_1d(explainer, curr, model, class_index=None, nsamples=None):
+    if nsamples is None:
+        nsamples = KERNEL_SHAP_NSAMPLES
 
-# ==============================
-# Traversal functions
-# ==============================
+    try:
+        if hasattr(explainer, "expected_value") and explainer.__class__.__name__ == "KernelExplainer":
+            shap_vals = explainer.shap_values(curr, nsamples=nsamples)
+        else:
+            shap_vals = explainer.shap_values(curr)
+    except TypeError:
+        shap_vals = explainer.shap_values(curr)
 
+    if isinstance(shap_vals, list):
+        if class_index is None:
+            class_index = 0
+        class_index = int(class_index)
+        class_index = max(0, min(class_index, len(shap_vals) - 1))
+        shap_vals = shap_vals[class_index]
+
+    exp = np.asarray(shap_vals, dtype=float)
+    exp = np.squeeze(exp)
+    if exp.ndim == 2:
+        exp = exp[0]
+    return exp
+
+# =========================================================
+# TRAVERSAL
+# =========================================================
 def traverse_explanations_LIME(sample_set, explainer, model, n_visits_lb, n_visits_ub, upper_limit, n_f_e, args2):
     classes, features, n_classes, n_features, isCat, epsilon_set, canNegative, classPossibilities, dataset_name = args2
     if isinstance(n_visits_lb, int):
@@ -703,6 +786,7 @@ def traverse_explanations_LIME(sample_set, explainer, model, n_visits_lb, n_visi
         pred = model.predict_proba([curr])[0]
         pmax = float(np.max(pred))
         class_index = int(np.argmax(pred))
+
         if globals().get("USE_CONF_GATING", False) and pmax < float(globals().get("CONF_TAU", 0.0)):
             continue
         if n_visits[class_index] < n_visits_ub[class_index]:
@@ -715,6 +799,7 @@ def traverse_explanations_LIME(sample_set, explainer, model, n_visits_lb, n_visi
             key = list(exp_map.keys())[0]
             exp_list = exp.as_list(key)
             exp_parsed = explanation_parser(exp_map, exp_list, key, features)
+
             tmp_exps, indices, cpys = [], [], []
             for i in range(k):
                 tmp_exps += [exp_parsed[i]]
@@ -727,41 +812,18 @@ def traverse_explanations_LIME(sample_set, explainer, model, n_visits_lb, n_visi
                 cpys[2 * i + 1][indices[i]] = tmp_exps[i][1]
             for i in range(2 * k):
                 ind_i = int(i / 2)
-                if cpys[i][indices[ind_i]] >= 0:
+                if (cpys[i][indices[ind_i]] >= 0):
                     if i % 2 == 0:
                         cpys[i][indices[ind_i]] += epsilon
                     else:
                         cpys[i][indices[ind_i]] -= epsilon
                 tmp = (any((cpys[i] == x).all() for x in visited_samples) or
-                       any((cpys[i] == x).all() for x in samples) or
+                       (any((cpys[i] == x).all() for x in samples)) or
                        (cpys[i][indices[ind_i]] < 0) or
                        (cpys[i][indices[ind_i]] >= classPossibilities[indices[ind_i]]))
                 if not tmp:
                     samples += [cpys[i]]
     return visited_samples, preds, query
-
-
-def _safe_shap_1d(explainer, curr, model, class_index=None, nsamples=None):
-    if nsamples is None:
-        nsamples = KERNEL_SHAP_NSAMPLES
-    try:
-        if hasattr(explainer, "expected_value") and explainer.__class__.__name__ == "KernelExplainer":
-            shap_vals = explainer.shap_values(curr, nsamples=nsamples)
-        else:
-            shap_vals = explainer.shap_values(curr)
-    except TypeError:
-        shap_vals = explainer.shap_values(curr)
-    if isinstance(shap_vals, list):
-        if class_index is None:
-            class_index = 0
-        class_index = int(class_index)
-        class_index = max(0, min(class_index, len(shap_vals) - 1))
-        shap_vals = shap_vals[class_index]
-    exp = np.asarray(shap_vals, dtype=float)
-    exp = np.squeeze(exp)
-    if exp.ndim == 2:
-        exp = exp[0]
-    return exp
 
 
 def traverse_explanations_SHAP(sample_set, explainer, model,
@@ -778,6 +840,7 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
 
     n_visits = np.zeros(len(classes))
     samples = sample_set.copy()
+
     init_preds = model.predict_proba(samples)
     preds = [int(np.argmax(p)) for p in init_preds]
 
@@ -796,27 +859,33 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
 
         # Step 1: query-buffer detector
         cluster_triggered = False
+        cluster_hits = 0
+        cluster_best_d = None
         if globals().get("USE_QUERY_CLUSTER_DETECTOR", False):
             try:
                 cluster_triggered, cluster_hits, cluster_best_d = is_suspicious_query_cluster(curr_np, epsilon_set)
             except Exception:
-                cluster_triggered = False
+                cluster_triggered, cluster_hits, cluster_best_d = (False, 0, None)
 
-        # model prediction
+        # prediction
         try:
-            pred = model.predict_proba([curr_np])[0]
-            probs = pred
-            real_class_index = int(np.argmax(pred))
+            probs = model.predict_proba([curr_np])[0]
+            real_class_index = int(np.argmax(probs))
             class_index = real_class_index
+            pmax = float(np.max(probs))
         except Exception:
             real_class_index = int(model.predict([curr_np])[0])
             class_index = real_class_index
             probs = None
+            pmax = 1.0
+
+        if globals().get("USE_CONF_GATING", False) and pmax < float(globals().get("CONF_TAU", 0.0)):
+            continue
 
         if query % 100 == 0:
             print(int(query / 100), end=" ")
 
-        # SIM detector (optional)
+        # SIM detection on REAL explanation only
         if globals().get("USE_SIM_CHECK", False):
             try:
                 exp_detect = _safe_shap_1d(explainer, np.array([curr_np]), model, class_index=real_class_index)
@@ -825,6 +894,8 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
                 k_detect = max(2, min(k_detect, len(exp_detect)))
                 top_idx = np.flip(np.argsort(np.abs(exp_detect)))[:k_detect]
                 sim_triggered, hits, best_d = is_autolycus_like(curr_np, top_idx, epsilon_set)
+                _SIM_STATE["last_hits"] = int(hits)
+                _SIM_STATE["last_best_d"] = None if best_d is None else float(best_d)
                 if sim_triggered and not _SIM_STATE["detected"]:
                     _SIM_STATE["detected"] = True
                     _SIM_STATE["detect_count"] += 1
@@ -834,18 +905,25 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
             except Exception:
                 pass
 
-        # propagate step-1 detection into common flag
+        # Query-cluster detector propagates into same detection flag
         if globals().get("USE_QUERY_CLUSTER_DETECTOR", False) and cluster_triggered:
-            _QUERY_CLUSTER_STATE["detected"] = True
-            if _QUERY_CLUSTER_STATE["first_detect_q"] is None:
-                _QUERY_CLUSTER_STATE["first_detect_q"] = int(query)
-            _SIM_STATE["detected"] = True
-            if _SIM_STATE["first_detect_q"] is None:
-                _SIM_STATE["first_detect_q"] = int(query)
+            if not _QUERY_CLUSTER_STATE["detected"]:
+                _QUERY_CLUSTER_STATE["detected"] = True
+                _QUERY_CLUSTER_STATE["detect_count"] += 1
+                _QUERY_CLUSTER_STATE["detect_qs"].append(int(query))
+                if _QUERY_CLUSTER_STATE["first_detect_q"] is None:
+                    _QUERY_CLUSTER_STATE["first_detect_q"] = int(query)
+
+            if not _SIM_STATE["detected"]:
+                _SIM_STATE["detected"] = True
+                _SIM_STATE["detect_count"] += 1
+                _SIM_STATE["detect_qs"].append(int(query))
+                if _SIM_STATE["first_detect_q"] is None:
+                    _SIM_STATE["first_detect_q"] = int(query)
 
         detected_now = bool(_SIM_STATE.get("detected", False))
 
-        # Step 2: distort label after detection
+        # Step 2: fake label after detection
         if detected_now and probs is not None and globals().get("FLIP_LABEL_ON_DETECT", False):
             mode = str(globals().get("FAKE_LABEL_MODE", "second_best")).lower()
             if len(probs) >= 2:
@@ -865,13 +943,13 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore")
 
-                # explanation for real or fake label
                 try:
-                    if detected_now and globals().get("USE_FAKE_SHAP_ON_DETECT", True):
-                        exp = _safe_shap_1d(explainer, np.array([curr_np]), model, class_index=class_index)
+                    if detected_now and globals().get("RANDOMIZE_SHAP_ON_DETECT", False):
+                        exp = np.random.normal(0, 1, size=feature_dim)
                     else:
-                        exp = _safe_shap_1d(explainer, np.array([curr_np]), model, class_index=real_class_index)
-                    exp = np.asarray(exp, dtype=float).reshape(-1)
+                        shap_class = class_index if (detected_now and globals().get("USE_FAKE_SHAP_ON_DETECT", False)) else real_class_index
+                        exp = _safe_shap_1d(explainer, np.array([curr_np]), model, class_index=shap_class)
+                        exp = np.asarray(exp, dtype=float).reshape(-1)
                 except Exception:
                     exp = np.zeros(feature_dim, dtype=float)
 
@@ -883,10 +961,7 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
                         pad = np.zeros(feature_dim - len(exp), dtype=float)
                         exp = np.concatenate([exp, pad])
 
-                # optional strong post-detect responses
                 if detected_now:
-                    if globals().get("FAKE_SHAP_RANDOM_ON_DETECT", False):
-                        exp = np.random.normal(0, 1, size=feature_dim)
                     if globals().get("SIM_CORRUPT_ON_DETECT", False):
                         try:
                             exp = sim_corrupt_explanation(exp, n_f_e=n_f_e)
@@ -897,7 +972,7 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
                     if globals().get("SIM_BLOCK_ON_DETECT", False):
                         _SIM_STATE["blocked"] = True
 
-            if globals().get("USE_SIM_CHECK", False) and _SIM_STATE.get("blocked", False):
+            if _SIM_STATE.get("blocked", False):
                 if (query % 10) == 0:
                     print("[SIM-B1] blocked -> returning with", len(visited_samples), "samples at query", query)
                 return visited_samples, preds, query
@@ -907,19 +982,21 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
             if globals().get("USE_VIEW_E", False):
                 exp = view_e_adaptive_reverse_shap(exp, pred_class=class_index)
 
+            # Traversal ranking
             k = min(max(1, int(n_f_e)), feature_dim)
             if detected_now and globals().get("POST_DETECT_RANDOM_EXPANSION", False):
                 k_post = int(globals().get("POST_DETECT_K", 1))
                 k_post = max(1, min(k_post, feature_dim))
+                all_idx = np.arange(feature_dim)
                 if globals().get("POST_DETECT_AVOID_RECENT", False):
                     recent = set(_SIM_STATE.get("recent_feat_idx", []))
-                    cand = np.array([i for i in range(feature_dim) if i not in recent], dtype=int)
+                    cand = np.array([i for i in all_idx if i not in recent], dtype=int)
                     if len(cand) < k_post:
-                        cand = np.arange(feature_dim)
+                        cand = all_idx
                     sort_index = np.random.choice(cand, size=k_post, replace=False)
                     _SIM_STATE["recent_feat_idx"] = (_SIM_STATE.get("recent_feat_idx", []) + sort_index.tolist())[-30:]
                 else:
-                    sort_index = np.random.choice(np.arange(feature_dim), size=k_post, replace=False)
+                    sort_index = np.random.choice(all_idx, size=k_post, replace=False)
                 k = len(sort_index)
             else:
                 sort_index = np.flip(np.argsort(np.abs(exp)))[:k]
@@ -932,6 +1009,7 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
 
             cpys = []
             oldOption = False
+
             if oldOption:
                 for i in range(2 * k):
                     cpys.append(np.copy(curr_np))
@@ -955,11 +1033,13 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
                     num = random.random()
                     tmp0 = cpys[0][sort_index[i]] + epsilon_set[sort_index[i]]
                     tmp1 = cpys[0][sort_index[i]] - epsilon_set[sort_index[i]]
+
                     if not isCat[sort_index[i]]:
                         cond1 = True
                     else:
                         cond1 = (tmp0 < classPossibilities[sort_index[i]])
                     cond2 = (tmp1 >= 0)
+
                     if num < 0.8:
                         if cond1:
                             cpys[0][sort_index[i]] += epsilon_set[sort_index[i]]
@@ -979,7 +1059,7 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
                             if cond1:
                                 cpys[0][sort_index[i]] += epsilon_set[sort_index[i]]
 
-                # IMPORTANT FIX: true baseline before detect, conservative after detect
+                # TRUE baseline vs defense behavior
                 children_to_add = [0] if detected_now else [0, 1]
                 for i in children_to_add:
                     tmp = (
@@ -993,10 +1073,9 @@ def traverse_explanations_SHAP(sample_set, explainer, model,
 
     return visited_samples, preds, query
 
-# ==============================
-# Metrics / persistence
-# ==============================
-
+# =========================================================
+# REST OF ORIGINAL PIPELINE
+# =========================================================
 def decode_pred(target, v_preds):
     v_pred_dec = np.zeros(len(v_preds))
     for i in range(len(v_preds)):
@@ -1004,6 +1083,21 @@ def decode_pred(target, v_preds):
             if v_preds[i] == target[j]:
                 v_pred_dec[i] = j
     return v_pred_dec
+
+
+def mega_sample_generation(testx, testy, n, sizes, n_set):
+    test_cpy = []
+    for i in range(len(testy)):
+        test_cpy += [np.append(testx[i], testy[i])]
+    test_cpy = np.array(test_cpy)
+    samples_mega = []
+    for _ in range(n_set):
+        sample_sets = []
+        for j in range(len(sizes)):
+            sample_set_sui = sample_set_generation(test_cpy, n, sizes[j])
+            sample_sets += [sample_set_sui.copy()]
+        samples_mega += [sample_sets]
+    return samples_mega
 
 
 def rtest_sim(shadow, target, test_data):
@@ -1021,15 +1115,19 @@ def pickling(dataset, modelName, accuracies, rtest_sims, samples_mega):
         tool = "SHAP"
     else:
         tool = "LIME"
+
     address_acc = tool + "/_models/" + modelName + "/" + modelName + "_accuracies_" + dataset
     address_sim = tool + "/_models/" + modelName + "/" + modelName + "_similarities_" + dataset
     address_smega = tool + "/_models/" + modelName + "/" + modelName + "_samples_mega_" + dataset
+
     acc_file = open(address_acc, 'wb')
     pickle.dump(accuracies, acc_file)
     acc_file.close()
+
     sim_file = open(address_sim, 'wb')
     pickle.dump(rtest_sims, sim_file)
     sim_file.close()
+
     smega_file = open(address_smega, 'wb')
     pickle.dump(samples_mega, smega_file)
     smega_file.close()
@@ -1040,15 +1138,19 @@ def unpickling(dataset, modelName):
         tool = "SHAP"
     else:
         tool = "LIME"
+
     address_acc = tool + "/_models/" + modelName + "/" + modelName + "_accuracies_" + dataset
     address_sim = tool + "/_models/" + modelName + "/" + modelName + "_similarities_" + dataset
     address_smega = tool + "/_models/" + modelName + "/" + modelName + "_samples_mega_" + dataset
+
     acc_file = open(address_acc, 'rb')
     accs = pickle.load(acc_file)
     acc_file.close()
+
     sim_file = open(address_sim, 'rb')
     sims = pickle.load(sim_file)
     sim_file.close()
+
     smega_file = open(address_smega, 'rb')
     samples_mega = pickle.load(smega_file)
     smega_file.close()
@@ -1064,20 +1166,22 @@ def argmaxing(accs, rss, args4):
         for j in range(max(len(nfe), len(sample_set_sizes))):
             idx = (ql * j) + i
             for k in range(how_many_sets):
-                if argmax_sim[idx][k] < argmax_sim[idx - 1][k]:
-                    argmax_acc[idx][k] = argmax_acc[idx - 1][k]
-                    argmax_sim[idx][k] = argmax_sim[idx - 1][k]
+                if argmax_sim[idx][k] < argmax_sim[idx-1][k]:
+                    argmax_acc[idx][k] = argmax_acc[idx-1][k]
+                    argmax_sim[idx][k] = argmax_sim[idx-1][k]
     return argmax_acc, argmax_sim
 
-# ==============================
-# Data / model loading
-# ==============================
 
 def load_dataset(which_dataset):
     if which_dataset == 0:
         X, y = shap.datasets.iris()
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
-        X_test_t, X_test_s, y_test_t, y_test_s = train_test_split(X_test, y_test, train_size=0.60, random_state=21, stratify=y_test)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.25, random_state=42, stratify=y
+        )
+        X_test_t, X_test_s, y_test_t, y_test_s = train_test_split(
+            X_test, y_test, train_size=0.60, random_state=21, stratify=y_test
+        )
+
         features = list(X.columns)
         classes = [0, 1, 2]
         n_features = len(features)
@@ -1103,10 +1207,12 @@ def load_dataset(which_dataset):
         features = ['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall']
         X = crop[features]
         y = crop['label'].to_numpy()
+
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, stratify=y, random_state=42)
         X_test_t, X_test_s, y_test_t, y_test_s = train_test_split(X_test, y_test, train_size=0.60, stratify=y_test, random_state=21)
-        classes = list(range(17))
+
         n_features = len(features)
+        classes = list(range(17))
         n_classes = len(classes)
         dataset_name = 'crop'
         isCategorical = [False] * n_features
@@ -1122,8 +1228,10 @@ def load_dataset(which_dataset):
         X = X.drop(['Capital Loss'], axis=1)
         X.rename(columns={'Capital Gain': 'Net Capital'}, inplace=True)
         y = y.astype(int)
+
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
         X_test_t, X_test_s, y_test_t, y_test_s = train_test_split(X_test, y_test, train_size=0.60, random_state=21, stratify=y_test)
+
         classes = [0, 1]
         features = list(X.columns)
         n_features = len(features)
@@ -1138,8 +1246,12 @@ def load_dataset(which_dataset):
         bc = load_breast_cancer()
         X = pd.DataFrame(bc.data)
         y = bc.target
-        X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(X, y, test_size=0.25, stratify=bc.target, random_state=42)
-        X_test_t, X_test_s, y_test_t, y_test_s = sklearn.model_selection.train_test_split(X_test, y_test, train_size=0.60, stratify=y_test, random_state=21)
+        X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(
+            X, y, test_size=0.25, stratify=bc.target, random_state=42
+        )
+        X_test_t, X_test_s, y_test_t, y_test_s = sklearn.model_selection.train_test_split(
+            X_test, y_test, train_size=0.60, stratify=y_test, random_state=21
+        )
         features = bc.feature_names
         classes = [0, 1]
         n_features = len(features)
@@ -1157,10 +1269,12 @@ def load_dataset(which_dataset):
         for col in features:
             label_encoder.fit(nursery[col])
             nursery[col] = label_encoder.transform(nursery[col])
+
         nursery.loc[nursery['final evaluation'] >= 2, 'final evaluation'] = 2
         features = nursery.columns[:-1]
         X = nursery[features]
         y = nursery['final evaluation'].to_numpy()
+
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
         X_test_t, X_test_s, y_test_t, y_test_s = train_test_split(X_test, y_test, train_size=0.60, random_state=21, stratify=y_test)
         classes = [0, 1, 2]
@@ -1175,14 +1289,17 @@ def load_dataset(which_dataset):
         mushroom = pd.read_csv('data/mushroom/mushroom_data.csv')
         mushroom[mushroom == '?'] = np.nan
         mushroom = mushroom.drop(mushroom.columns[16], axis=1)
+
         features = list(mushroom.columns)
         label_encoder = LabelEncoder()
         for col in features:
             label_encoder.fit(mushroom[col])
             mushroom[col] = label_encoder.transform(mushroom[col])
+
         features = mushroom.columns[1::]
         X = mushroom[features]
         y = mushroom['p'].to_numpy()
+
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
         X_test_t, X_test_s, y_test_t, y_test_s = train_test_split(X_test, y_test, train_size=0.60, random_state=21, stratify=y_test)
         classes = [0, 1]
@@ -1192,6 +1309,9 @@ def load_dataset(which_dataset):
         epsilon_set = [1] * n_features
         canNegative = [False] * n_features
         dataset_name = 'mushroom'
+
+    else:
+        raise ValueError("Unsupported dataset index")
 
     classPossibilities = []
     for i in range(n_features):
@@ -1232,29 +1352,52 @@ def load_model(which_model, X_train, y_train):
         _hidden = (32, 32)
         t_model = Pipeline([
             ("scaler", StandardScaler(with_mean=True, with_std=True)),
-            ("mlp", MLPClassifier(hidden_layer_sizes=_hidden, activation="relu", solver="adam", alpha=1e-4, learning_rate_init=1e-3, max_iter=400, random_state=0, verbose=False))
+            ("mlp", MLPClassifier(
+                hidden_layer_sizes=_hidden,
+                activation="relu",
+                solver="adam",
+                alpha=1e-4,
+                learning_rate_init=1e-3,
+                max_iter=400,
+                random_state=0,
+                verbose=False
+            ))
         ])
         t_model.fit(X_train, y_train)
         model_name = f'Simple NN (MLP-{len(_hidden)}x{_hidden[0]})'
+    else:
+        raise ValueError("Unsupported model index")
+
     return t_model, model_name
 
 
 def load_explainer(explanation_tool, t_model, model_name, X_train):
     if explanation_tool == 1:
         shap.initjs()
+
         if model_name in ("dt", "rdf"):
             return shap.TreeExplainer(t_model)
+
         if model_name == "lr":
             bg = X_train.sample(min(200, len(X_train)), random_state=0)
             try:
-                return shap.LinearExplainer(t_model, bg, feature_perturbation="interventional")
+                return shap.LinearExplainer(
+                    t_model,
+                    bg,
+                    feature_perturbation="interventional"
+                )
             except TypeError:
                 return shap.LinearExplainer(t_model, bg)
+
         f = lambda x: t_model.predict_proba(x)[:, 1]
         bg = X_train.sample(min(100, len(X_train)), random_state=0)
         return shap.KernelExplainer(f, bg, normalize=False)
+
     else:
-        return lime.lime_tabular.LimeTabularExplainer(X_train.values, discretize_continuous=True)
+        return lime.lime_tabular.LimeTabularExplainer(
+            X_train.values,
+            discretize_continuous=True
+        )
 
 
 def getModelInfo(t_model, X_train, y_train, X_test_t, y_test_t):
@@ -1277,9 +1420,6 @@ def load_experiment_dicts():
     exp_dict = {0: 'LIME', 1: 'SHAP'}
     return dataset_dict, model_dict, exp_dict
 
-# ==============================
-# Main experiment runners
-# ==============================
 
 def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so):
     which_dataset = wd if isinstance(wd, int) else (lambda: (_ for _ in ()).throw(TypeError("Only integers are allowed")))()
@@ -1303,6 +1443,7 @@ def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so):
     print(exp_dict.get(explanation_tool), 'is the explanation tool currently in use\n')
 
     samples_mega = mega_sample_generation(X_test_s.to_numpy(), y_test_s, n_classes, sample_set_sizes, how_many_sets)
+
     accuracies = []
     rtest_sims = []
     prioritizeSim = True
@@ -1332,7 +1473,7 @@ def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so):
                 sims = []
                 for i in range(how_many_sets):
                     if max_sim[i]:
-                        print('Sample set', i, ' Max similarity reached, no need for traversal!')
+                        print('Sample set', i, " Max similarity reached, no need for traversal!")
                         sims += [1]
                         real_accuracy += [t_accuracy]
                     else:
@@ -1364,6 +1505,7 @@ def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so):
                                     models += [mlp(activation='relu', hidden_layer_sizes=(10 * l), solver='adam', max_iter=10000)]
                             else:
                                 s_model = DecisionTreeClassifier(random_state=0)
+
                             if model_name == 'mlp':
                                 for m in models:
                                     m.fit(v_samples_np, v_pred_dec)
@@ -1373,6 +1515,7 @@ def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so):
                                 s_model.fit(v_samples_np, v_pred_dec)
                                 sim += [rtest_sim(s_model, t_model, X_test_t.values)]
                                 s_accuracy += [accuracy_score(y_test_t, s_model.predict(X_test_t.values))]
+
                         tmp = np.argmax(sim) if prioritizeSim else np.argmax(s_accuracy)
                         m_sim = round(sim[tmp], 4)
                         sims += [m_sim]
@@ -1382,7 +1525,7 @@ def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so):
                         print('Sample set', i, ', n_queries =', len(v_pred_dec), ', Top similarity =', m_sim)
                 accuracies += [real_accuracy]
                 rtest_sims += [sims]
-                print('Accuracy: ', real_accuracy, '\nSimilarity: ', sims, '\n')
+                print("Accuracy: ", real_accuracy, "\nSimilarity: ", sims, "\n")
 
     args0 = [which_dataset, which_model, explanation_tool]
     args3 = [t_model, model_name, t_accuracy, t_explainer]
@@ -1392,6 +1535,7 @@ def run_attack_auto(wd, wm, et, hms, sss, nfe, ql, so):
     accuracies, rtest_sims = argmaxing(accuracies, rtest_sims, args4)
     if save_option:
         save_results(dataset_name, model_name, accuracies, rtest_sims, samples_mega)
+
     return accuracies, rtest_sims, samples_mega, other_args
 
 
@@ -1417,6 +1561,7 @@ def run_attack_auto_v2(wd, wm, et, hms, sss, nfe, ql, so):
     print(exp_dict.get(explanation_tool), 'is the explanation tool currently in use\n')
 
     samples_mega = mega_sample_generation(X_test_s.to_numpy(), y_test_s, n_classes, sample_set_sizes, how_many_sets)
+
     rows, cols, dims = len(query_limit), how_many_sets, len(nfe)
     accuracies = [[[0 for _ in range(cols)] for _ in range(rows)] for _ in range(dims)]
     rtest_sims = [[[0 for _ in range(cols)] for _ in range(rows)] for _ in range(dims)]
@@ -1442,7 +1587,9 @@ def run_attack_auto_v2(wd, wm, et, hms, sss, nfe, ql, so):
         print('Number of top features allowed to be explored (k):', f)
         for g in range(len(sample_set_sizes)):
             print('\nNumber of samples per class (n):', sample_set_sizes[g])
+
             max_sim = [False] * how_many_sets
+
             for i in range(how_many_sets):
                 if explanation_tool == 0:
                     v_samples_np, v_pred_dec, n_query = traverse_explanations_LIME(samples_mega[i][g], t_explainer, t_model, lb_set[-1], ub_set[-1], query_limit[-1], f, args2)
@@ -1469,24 +1616,29 @@ def run_attack_auto_v2(wd, wm, et, hms, sss, nfe, ql, so):
                             s_model = knn(n_neighbors=n_classes)
                         else:
                             s_model = DecisionTreeClassifier(random_state=0)
+
                         s_model.fit(data_x, data_y)
                         sim += [rtest_sim(s_model, t_model, X_test_t.values)]
                         s_accuracy += [accuracy_score(y_test_t, s_model.predict(X_test_t.values))]
+
                     tmp = np.argmax(sim) if prioritizeSim else np.argmax(s_accuracy)
                     m_sim = round(sim[tmp], 4)
                     if m_sim == 1:
                         max_sim[i] = True
                     accuracies[f_idx][h][i] = round(s_accuracy[tmp], 4)
                     rtest_sims[f_idx][h][i] = round(sim[tmp], 4)
+
                 print('Sample set', i, ', n_queries =', len(v_pred_dec), ', Top similarity =', m_sim)
-        print('Accuracy: ', accuracies, '\nSimilarity: ', rtest_sims, '\n')
+        print("Accuracy: ", accuracies, "\nSimilarity: ", rtest_sims, "\n")
 
     args0 = [which_dataset, which_model, explanation_tool]
     args3 = [t_model, model_name, t_accuracy, t_explainer]
     args4 = [how_many_sets, sample_set_sizes, nfe, query_limit]
     other_args = [args0, args1, args2, args3, args4]
+
     if save_option:
         save_results(dataset_name, model_name, accuracies, rtest_sims, samples_mega)
+
     return accuracies, rtest_sims, samples_mega, other_args
 
 
@@ -1507,6 +1659,7 @@ def run_attack_prepared(isFast):
         sample_set_sizes = [5]
         nfe = [3, 5, 7]
         query_limit = [0, 100, 250, 500, 1000]
+
     return run_attack_auto(which_dataset, which_model, explanation_tool, how_many_sets, sample_set_sizes, nfe, query_limit, False)
 
 
